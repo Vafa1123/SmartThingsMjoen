@@ -19,6 +19,7 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  *  VERSION HISTORY
+ *  09-05-2019: 2.6 - Handle new Long Secret Key format for future Neato Botvac firmware.
  *  12-13-2018: 2.5 - Modified cleaning message for mode for all models.   
  *  12-05-2018: 2.4 - Included Persistent Map and other modes for new D3 changes and removed firmware specific error/tiles.   
  *  09-05-2018: 2.3 - Modified if statement for Error message handling.  
@@ -78,11 +79,13 @@ metadata {
         command "setCleaningMode", ["string"]
         command "setNavigationMode", ["string"]
         command "setPersistentMapMode", ["string"]
+        command "setSecretKey", ["string"]
         command "findMe"
 
 		attribute "network","string"
 		attribute "bin","string"
         attribute "status","string"
+        attribute "dockStatus","string"
 	}
 
 
@@ -381,6 +384,11 @@ def setPersistentMapMode(mode) {
     }
 }
 
+def setSecretKey(key) {
+	state.secretKey = key
+	sendEvent(name: 'secretKey', value: state.secretKey, displayed: false)
+}
+
 def poll() {
 	log.debug "Executing 'poll'"
     def resp = nucleoPOST("/messages", '{"reqId":"1", "cmd":"getRobotState"}')
@@ -659,6 +667,10 @@ def poll() {
 
 def refresh() {
 	log.debug "Executing 'refresh'"
+    if (state.secretKey == null) {
+    	//Issue notification
+    	parent.messageHandler("IMPORTANT: Update to Neato(Connect) and device handler required for new Neato firmware:\n1. Remove all Neato device smart app dependencies.\n2.Remove Neato devices.\n3. Update SmartApp to Neato (Connect) v1.2.5 or later and Device Handler to Neato Connected Series v1.13 or later from Github.\n4. Re-add your Neato Botvacs.\n5. Reconfigure your SmartSchedules as they will probably be deleted." ,true)
+    }
 	poll()
 }
 
@@ -710,25 +722,27 @@ def nucleoPOST(path, body) {
 
 def getHMACSignature(date, body) {
 	//request params
-	def robot_serial = device.deviceNetworkId.tokenize("|")[0]
+	def robot_serial = device.deviceNetworkId
     //Format date should be "Fri, 03 Apr 2015 09:12:31 GMT"
 	
-	def robot_secret_key = device.deviceNetworkId.tokenize("|")[1]
+    if (state.secretKey) {
+		def robot_secret_key = state.secretKey
 
-	// build string to be signed
-	def string_to_sign = "${robot_serial.toLowerCase()}\n${date}\n${body}"
+		// build string to be signed
+		def string_to_sign = "${robot_serial.toLowerCase()}\n${date}\n${body}"
 
-	// create signature with SHA256
-	//signature = OpenSSL::HMAC.hexdigest('sha256', robot_secret_key, string_to_sign)
-    try {
-    	Mac mac = Mac.getInstance("HmacSHA256")
-    	SecretKeySpec secretKeySpec = new SecretKeySpec(robot_secret_key.getBytes(), "HmacSHA256")
-    	mac.init(secretKeySpec)
-    	byte[] digest = mac.doFinal(string_to_sign.getBytes())
-    	return digest.encodeHex()
-   	} catch (InvalidKeyException e) {
-    	throw new RuntimeException("Invalid key exception while converting to HMac SHA256")
-  	}
+		// create signature with SHA256
+		//signature = OpenSSL::HMAC.hexdigest('sha256', robot_secret_key, string_to_sign)
+    	try {
+    		Mac mac = Mac.getInstance("HmacSHA256")
+    		SecretKeySpec secretKeySpec = new SecretKeySpec(robot_secret_key.getBytes(), "HmacSHA256")
+    		mac.init(secretKeySpec)
+    		byte[] digest = mac.doFinal(string_to_sign.getBytes())
+    		return digest.encodeHex()
+   		} catch (InvalidKeyException e) {
+    		throw new RuntimeException("Invalid key exception while converting to HMac SHA256")
+  		}
+    }
 }
 
 Map nucleoRequestHeaders(date, HMACsignature) {
